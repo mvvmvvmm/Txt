@@ -24,23 +24,17 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.txt.ui.theme.GrayLight
 import com.example.txt.ui.theme.TextPrimary
 import com.example.txt.ui.theme.TxtTheme
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -54,50 +48,18 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun FileViewerScreen() {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+fun FileViewerScreen(viewModel: FileReaderViewModel = viewModel()) {
+    // Подписываемся на состояние из ViewModel
+    val uiState by viewModel.uiState.collectAsState()
 
-    var isLoading by remember { mutableStateOf(false) }
-    var contentText by remember { mutableStateOf("Содержимое файла появится здесь...") }
-    var isError by remember { mutableStateOf(false) }
-
+    // Лаунчер для вызова системного файлового менеджера
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri == null) {
-            isLoading = false
-            return@rememberLauncherForActivityResult
-        }
-
-        isLoading = true
-        isError = false
-        contentText = ""
-
-        scope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    context.contentResolver
-                        .openInputStream(uri)
-                        ?.use { it.bufferedReader().readText() }
-                        ?: throw IllegalStateException("Не удалось открыть поток файла")
-                }
-            }
-
-            isLoading = false
-
-            result.onSuccess { text ->
-                if (text.isBlank()) {
-                    isError = true
-                    contentText = "Ошибка: файл пуст или содержит только пробелы."
-                } else {
-                    isError = false
-                    contentText = text
-                }
-            }.onFailure { e ->
-                isError = true
-                contentText = "Ошибка чтения файла: ${e.localizedMessage ?: "неизвестная ошибка"}"
-            }
+            viewModel.cancelLoading()
+        } else {
+            viewModel.readFile(uri) // Передаем файл в логику
         }
     }
 
@@ -110,12 +72,12 @@ fun FileViewerScreen() {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Top
         ) {
+            // КНОПКА
             Button(
                 onClick = {
-                    isLoading = true
                     launcher.launch(arrayOf("text/plain"))
                 },
-                enabled = !isLoading,
+                enabled = !uiState.isLoading, // Блокируем, если идет загрузка
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(text = "Открыть файл", fontSize = 16.sp)
@@ -123,28 +85,27 @@ fun FileViewerScreen() {
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            if (isLoading) {
+            // ИНДИКАТОР
+            if (uiState.isLoading) {
                 CircularProgressIndicator(
                     modifier = Modifier.align(Alignment.CenterHorizontally)
                 )
                 Spacer(modifier = Modifier.height(16.dp))
             }
 
+            // ОБЛАСТЬ ТЕКСТА
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .background(
-                        color = GrayLight,
-                        shape = RoundedCornerShape(8.dp)
-                    )
+                    .background(color = GrayLight, shape = RoundedCornerShape(8.dp))
                     .padding(12.dp)
             ) {
                 Text(
-                    text = contentText,
+                    text = uiState.contentText,
                     fontSize = 16.sp,
-                    color = if (isError) MaterialTheme.colorScheme.error else TextPrimary,
-                    fontWeight = if (isError) FontWeight.Bold else FontWeight.Normal,
+                    color = if (uiState.isError) MaterialTheme.colorScheme.error else TextPrimary,
+                    fontWeight = if (uiState.isError) FontWeight.Bold else FontWeight.Normal,
                     modifier = Modifier
                         .fillMaxSize()
                         .verticalScroll(rememberScrollState())
